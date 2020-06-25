@@ -56,7 +56,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _WaterNormalMap:
-        m_Texture: {fileID: 2800000, guid: cc65cf108d4ac4f4eaf47e7f6a6e7a52, type: 3}
+        m_Texture: {fileID: 2800000, guid: d30e1784401c58c4b97cccdad5a06934, type: 3}
         m_Scale: {x: 3, y: 3}
         m_Offset: {x: 0, y: 0}
     m_Floats:
@@ -69,7 +69,7 @@ Material:
     - _GlossMapScale: 1
     - _Glossiness: 0.5
     - _GlossyReflections: 1
-    - _HeightFactor: 0.02
+    - _HeightFactor: 0.15
     - _Metallic: 0
     - _Mode: 0
     - _OcclusionStrength: 1

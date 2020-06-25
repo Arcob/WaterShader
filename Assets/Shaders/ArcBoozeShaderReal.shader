@@ -6,7 +6,7 @@
 		_PlanePosition ("PlanePosition", Vector) = (0, 0, 0, 1)
 		_PlaneNormal("PlaneNormal", Vector) = (0, 1, 0, 0)
 		_MainTex("Main Tex", 2D) = "white" {}
-		_WaterNormalMap("Water Surface Normal Tex", 2D) = "white" {}
+		_NoiseTex("Noise Tex", 2D) = "white" {}
 		_AlphaScale("Alpha Scale", Range(0, 1)) = 1
 		_BumpedStrength("Bump Strength", Range(0, 1)) = 1
 		_HeightFactor("HeightFactor", Range(-1, 1)) = 1
@@ -131,15 +131,16 @@
 				fixed4 _PlaneNormal;
 				float _HeightFactor;
 				sampler2D _MainTex;
-				sampler2D _WaterNormalMap;
+				sampler2D _NoiseTex;
 				float4 _MainTex_ST;
-				float4 _WaterNormalMap_ST;
+				float4 _NoiseTex_ST;
 				fixed _AlphaScale;
 				fixed _BumpedStrength;
 
 				struct SpringData
 				{
 					float3 cachedPos;
+					float3 cachedWorldPos;
 					float3 cachedVelocity;
 				};
 				uniform RWStructuredBuffer<SpringData> _myWriteBuffer : register(u1);
@@ -174,42 +175,50 @@
 					v2f o;
 
 					float3 cachedModelPos = _myReadBuffer[v.id].cachedPos;
+					//当前实际在世界坐标下的位置
+					float3 lastFrameWorldPos = _myReadBuffer[v.id].cachedWorldPos;
 					float3 lastFrameVelocity = _myReadBuffer[v.id].cachedVelocity;
-					//当前实际在的位置
-					float3 cachedWorldPos = mul(unity_ObjectToWorld, float4(cachedModelPos, 1)).xyz;
 
 					o.modelPos = mul(unity_ObjectToWorld, float4(v.vertex.xyz, 0.0));
+					float upLerpFactor = clamp(0, 1, 1 - abs(_HeightFactor - o.modelPos.y));
 					if (CheckVisible(o.modelPos)) {
 						v.vertex.xyz = mul(unity_WorldToObject, float4(o.modelPos.x, _HeightFactor , o.modelPos.z, o.modelPos. w)).xyz;	
 					}
 					//当前应该在的位置
 					o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-
-					float dist = distance(cachedWorldPos, o.worldPos);
-					float3 addVelocity = (o.worldPos - cachedWorldPos) * unity_DeltaTime.y * 0.5;
-					//float3 verticalMoveAdd = dot((o.worldPos - cachedWorldPos), (v.vertex.x, 0.0, v.vertex.z)) * normalized(o.worldPos - cachedWorldPos) * 1.0f;
-					//float3 verticalMoveAdd = float3(0, (o.worldPos - cachedWorldPos).x * v.vertex.x + (o.worldPos - cachedWorldPos).z * v.vertex.z, 0);
-					float3 curVelocity = (lastFrameVelocity + addVelocity) * pow(0.75f, unity_DeltaTime.x);
-					if (length(curVelocity) < 0.00f) {
-						curVelocity = (0, 0, 0);
+					
+					float dist = distance(lastFrameWorldPos, o.worldPos);
+					float3 deltaMovement = o.worldPos - lastFrameWorldPos;
+					float3 normalizedDelta = 0;
+					if (length(deltaMovement) > 0.000001) {
+						normalizedDelta = normalize(deltaMovement);
+					}				
+					float3 addVelocity = float3(0.0, deltaMovement.y, 0.0) * 2.0f;
+					float3 verticalMoveAdd = float3(0, normalizedDelta.x * normalize(o.modelPos).x + normalizedDelta.z * normalize(o.modelPos).z, 0) * -1.0f;
+					float3 curVelocity = (lastFrameVelocity)* pow(0.001f, unity_DeltaTime.x) + addVelocity + verticalMoveAdd;
+					float randomFactor = 1 + (tex2Dlod(_NoiseTex, float4(v.texcoord.xy, 0, 0)).r - 0.5) * 0.1;
+					if (length(curVelocity) > 0.01f || dist > 0.01f) {
+						o.worldPos = float3(o.worldPos.x, lerp(o.worldPos.y, (lastFrameWorldPos + randomFactor * curVelocity * unity_DeltaTime.x).y, upLerpFactor) , o.worldPos.z);
 					}
-					//curVelocity = float3(0, curVelocity.y , 0);
-					if (dist > 0.001f) {
-						//o.worldPos = cachedWorldPos + normalize(o.worldPos - cachedWorldPos) * 0.5f * unity_DeltaTime.x;
-						o.worldPos = cachedWorldPos + curVelocity * 3.0f * unity_DeltaTime.x;
+					else {
+						curVelocity = float3(0, 0, 0);
 					}
 					
 					v.vertex = mul(unity_WorldToObject, float4(o.worldPos, 1));
-					
+					v.vertex.w = 1;
+
+					o.delta = verticalMoveAdd;
+
 					_myWriteBuffer[v.id].cachedPos = v.vertex.xyz;
-					_myWriteBuffer[v.id].cachedVelocity = -curVelocity;
+					_myWriteBuffer[v.id].cachedWorldPos = o.worldPos.xyz;
+					_myWriteBuffer[v.id].cachedVelocity = curVelocity;
 					
 					o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
 
 					o.pos = UnityObjectToClipPos(v.vertex);
 
 					o.uv.xy = TRANSFORM_TEX(v.texcoord, _MainTex);
-					o.uv.zw = TRANSFORM_TEX(v.texcoord, _WaterNormalMap);
+					o.uv.zw = TRANSFORM_TEX(v.texcoord, _NoiseTex);
 
 					fixed3 worldNormal = UnityObjectToWorldNormal(v.normal);
 					fixed3 worldTangent = UnityObjectToWorldDir(v.tangent.xyz);
@@ -224,7 +233,7 @@
 
 				fixed4 frag(v2f i) : SV_Target {
 					fixed3 worldNormal = (0, 0, 1);
-					fixed3 unpackedWorldNormal = UnpackNormal(tex2D(_WaterNormalMap, i.uv.zw));
+					fixed3 unpackedWorldNormal = UnpackNormal(tex2D(_NoiseTex, i.uv.zw));
 
 					fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
 
